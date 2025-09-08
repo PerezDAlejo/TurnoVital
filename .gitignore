@@ -1,0 +1,38 @@
+# Python / entornos
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.dist-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Config/secretos
+.env
+.env.*
+secrets/
+!secrets/README.md
+
+# IDE / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs / builds
+logs/
+*.log
+build/
+dist/
+.eggs/
+.aws-sam/
+htmlcov/
+coverage.xml
+.coverage
+
+# Ngrok
+.ngrok2/

@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.env
+secrets/
+.agendamiento-cache/
+.git/
+.vscode/
+**/node_modules/
+.mypy_cache/
+.pytest_cache/
+.eggs/
+.build/

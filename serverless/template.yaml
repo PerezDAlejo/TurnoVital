@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: API Serverless para Sistema de Agendamiento Médico (FastAPI + Saludtools)
+
+Globals:
+	Function:
+		Runtime: python3.12
+		Timeout: 30
+		MemorySize: 512
+		Tracing: Active
+		Environment:
+			Variables:
+				LOG_LEVEL: INFO
+				PYTHONPATH: /var/task
+
+Parameters:
+	StageName:
+		Type: String
+		Default: dev
+	Environment:
+		Type: String
+		Default: testing
+	OpenAIKey:
+		Type: String
+		NoEcho: true
+	SaludtoolsApiKey:
+		Type: String
+		NoEcho: true
+	SaludtoolsApiSecret:
+		Type: String
+		NoEcho: true
+	TwilioAccountSid:
+		Type: String
+		NoEcho: true
+	TwilioAuthToken:
+		Type: String
+		NoEcho: true
+	TwilioWhatsappFrom:
+		Type: String
+	SupabaseUrl:
+		Type: String
+	SupabaseKey:
+		Type: String
+		NoEcho: true
+
+Resources:
+	ApiFunction:
+		Type: AWS::Serverless::Function
+		Properties:
+			FunctionName: !Sub agendamiento-api-${StageName}
+			Handler: serverless.handler.lambda_handler
+			CodeUri: ../
+			Architectures:
+				- x86_64
+			Policies:
+				- AWSLambdaBasicExecutionRole
+			Environment:
+				Variables:
+					ENVIRONMENT: !Ref Environment
+					OPENAI_API_KEY: !Ref OpenAIKey
+					SALUDTOOLS_API_KEY: !Ref SaludtoolsApiKey
+					SALUDTOOLS_API_SECRET: !Ref SaludtoolsApiSecret
+					TWILIO_ACCOUNT_SID: !Ref TwilioAccountSid
+					TWILIO_AUTH_TOKEN: !Ref TwilioAuthToken
+					TWILIO_WHATSAPP_FROM: !Ref TwilioWhatsappFrom
+					SUPABASE_URL: !Ref SupabaseUrl
+					SUPABASE_KEY: !Ref SupabaseKey
+			Events:
+				ApiRoot:
+					Type: Api
+					Properties:
+						Path: /
+						Method: ANY
+						RestApiId: !Ref ApiGateway
+				ApiProxy:
+					Type: Api
+					Properties:
+						Path: /{proxy+}
+						Method: ANY
+						RestApiId: !Ref ApiGateway
+
+	ApiGateway:
+		Type: AWS::Serverless::Api
+		Properties:
+			StageName: !Ref StageName
+			TracingEnabled: true
+			Cors:
+				AllowOrigins: "*"
+				AllowMethods: "*"
+				AllowHeaders: "*"
+			EndpointConfiguration: REGIONAL
+			MethodSettings:
+				- LoggingLevel: INFO
+					ResourcePath: "/*"
+					HttpMethod: "*"
+
+Outputs:
+	ApiUrl:
+		Description: URL base de la API
+		Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/
