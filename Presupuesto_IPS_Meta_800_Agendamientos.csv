@@ -1,0 +1,10 @@
+Nivel de Volumen (Mensual),Citas aprox,Costo Twilio (USD),Costo AI Gemini/GPT4 (USD),Base de Datos Supabase (USD),Servidor VPS (USD),Total Costos Proveedores (USD),Total Costos Proveedores (COP aprox),Sugerencia Plan Todo Incluido Cobro al Cliente (COP),Tu Ganancia Neta Mensual (COP)
+Nivel 1: Inicial,0 - 500,$15,$10,$0 (Nivel Gratis),$5,$30,120.000,760.000,640.000
+Nivel 2: Medio,500 - 1500,$35,$25,$25 (Pro),$6,$91,364.000,1.360.000,996.000
+Nivel 3: Alto,1500+,$70,$50,$25 (Pro),$10,$155,620.000,2.200.000,1.580.000
+
+"NOTAS DE EFICIENCIA (SaaS / Pay-as-you-go):"
+"1. Escalabilidad inteligente: Pagas solo por lo que usas en WhatsApp (Twilio) y APIs de IA. En fase inicial (MVP) hay muy poco riesgo financiero."
+"2. Modelo IA Híbrido: Usar Gemini Flash (súper económico) para el 90% del chat y reservar GPT-4o (más costoso) SOLO para lectura de PDF/imágenes complejas reduce la factura de IA en un ~70%."
+"3. Arquitectura Stateless: Al guardar todo el estado en Supabase (Postgres), podemos usar un VPS muy económico ($5 USD) constante y sin latencia en frío (cold starts)."
+"4. Supabase Free Tier: La capa gratuita permite almacenar hasta 500MB de información, ideal para cubrir los primeros 6 meses de operación sin costo adicional de DB."

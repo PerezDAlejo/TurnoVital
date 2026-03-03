@@ -1,0 +1,33 @@
+{
+  "archivos_test": [
+    {
+      "archivo": "orden_fisioterapia_lumbar.png",
+      "tipo": "imagen_clara",
+      "datos_esperados": {
+        "paciente": "JUAN CARLOS PÉREZ LÓPEZ",
+        "documento": "CC 12.345.678",
+        "diagnóstico": "M54.5 - LUMBALGIA NO ESPECIFICADA",
+        "tratamiento": "FISIOTERAPIA ORTOPÉDICA",
+        "sesiones": 20
+      }
+    },
+    {
+      "archivo": "orden_borrosa_ejemplo.jpg",
+      "tipo": "imagen_baja_calidad",
+      "debe_pedir_retomar": true
+    },
+    {
+      "archivo": "orden_fisioterapia_rodilla.docx",
+      "tipo": "documento_word",
+      "datos_esperados": {
+        "paciente": "ANA MARÍA GONZÁLEZ VÁSQUEZ",
+        "documento": "CC 98.765.432",
+        "diagnóstico": "S83.2 - DESGARRO DEL MENISCO",
+        "tratamiento": "FISIOTERAPIA ORTOPÉDICA POST-QUIRÚRGICA",
+        "sesiones": 15
+      }
+    }
+  ],
+  "fecha_creacion": "2025-11-16",
+  "proposito": "Testing sistema OCR inteligente IPS React"
+}

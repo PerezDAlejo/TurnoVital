@@ -8,14 +8,14 @@ class CitaRequest(BaseModel):
     documento: str = Field(..., pattern=r'^\d{6,15}$', description="Número de documento entre 6 y 15 dígitos")
     telefono: str = Field(..., pattern=r'^\d{10}$', description="Número de teléfono colombiano (10 dígitos)")
     email: EmailStr | None = None
-    descripcion: str = Field(..., min_length=5, description="Motivo o tipo de cita o texto libre (usado para mapear tipo fisioterapia)")
+    descripcion: str = Field(..., min_length=3, description="Motivo o tipo de cita o texto libre (usado para mapear tipo fisioterapia)")
     fecha_deseada: datetime
-    preferencia_contacto: Literal['whatsapp', 'email'] = Field(..., description="Medio preferido para notificación")
+    preferencia_contacto: Literal['whatsapp', 'email'] = Field(default="whatsapp", description="Medio preferido para notificación")
     # Campos enriquecidos (opcionales) para nuevo flujo
     tipo_cita: Literal['PRIMERA VEZ', 'CONTROL', 'ACONDICIONAMIENTO'] | None = Field(None, description="Tipo canónico de cita")
     especialista: str | None = Field(None, description="Nombre de fisioterapeuta / especialista")
     franja: Literal['manana', 'mediodia', 'tarde'] | None = Field(None, description="Franja horaria preferida")
-    plan_salud: Literal['prepago', 'particular'] | None = Field(None, description="Plan de salud (prepago/particular)")
+    tipo_medicina: Literal['prepago', 'particular'] | None = Field(None, description="Tipo de medicina (prepago/particular)")
     tiene_orden_medica: bool | None = Field(None, description="Indica si reporta tener orden médica")
 
     @field_validator('fecha_deseada')

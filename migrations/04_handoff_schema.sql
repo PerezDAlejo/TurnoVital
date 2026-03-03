@@ -1,5 +1,5 @@
 -- Migration 04: Handoff persistence (secretarias y escalaciones)
--- Idempotente
+-- Idempotente y compatible con ejecución repetida en Supabase / Postgres
 
 CREATE TABLE IF NOT EXISTS secretarias (
   phone text PRIMARY KEY,
@@ -28,19 +28,25 @@ CREATE TABLE IF NOT EXISTS escalaciones_handoff (
 CREATE INDEX IF NOT EXISTS idx_escalaciones_tenant_estado ON escalaciones_handoff(tenant_key, estado, created_at);
 CREATE INDEX IF NOT EXISTS idx_escalaciones_queue ON escalaciones_handoff(tenant_key, estado, queued_at);
 
--- Trigger to update updated_at
+-- Funciones (se crean o reemplazan siempre; son idempotentes)
+CREATE OR REPLACE FUNCTION set_updated_at_secretarias()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION set_updated_at_escalaciones()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+
+-- Triggers (crear sólo si no existen)
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_secretarias_updated_at'
-  ) THEN
-    CREATE OR REPLACE FUNCTION set_updated_at_secretarias()
-    RETURNS TRIGGER AS $$
-    BEGIN
-      NEW.updated_at = now();
-      RETURN NEW;
-    END; $$ LANGUAGE plpgsql;
-
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_secretarias_updated_at') THEN
     CREATE TRIGGER trg_secretarias_updated_at
     BEFORE UPDATE ON secretarias
     FOR EACH ROW EXECUTE FUNCTION set_updated_at_secretarias();
@@ -49,16 +55,7 @@ END $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_escalaciones_updated_at'
-  ) THEN
-    CREATE OR REPLACE FUNCTION set_updated_at_escalaciones()
-    RETURNS TRIGGER AS $$
-    BEGIN
-      NEW.updated_at = now();
-      RETURN NEW;
-    END; $$ LANGUAGE plpgsql;
-
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_escalaciones_updated_at') THEN
     CREATE TRIGGER trg_escalaciones_updated_at
     BEFORE UPDATE ON escalaciones_handoff
     FOR EACH ROW EXECUTE FUNCTION set_updated_at_escalaciones();

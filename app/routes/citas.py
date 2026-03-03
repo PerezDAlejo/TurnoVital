@@ -81,30 +81,49 @@ async def agendar_cita(cita: CitaRequest):
             "comment": (
                 f"Agendada vía WhatsApp. Contacto: {cita.preferencia_contacto}; "
                 f"Tipo: {cita.tipo_cita or sanitized_appt_type}; Especialista: {cita.especialista or 'N/D'}; "
-                f"Plan: {getattr(cita, 'plan_salud', None) or 'N/D'}; Franja: {cita.franja or 'N/D'}; "
+                f"Plan: {getattr(cita, 'tipo_medicina', None) or 'N/D'}; Franja: {cita.franja or 'N/D'}; "
                 f"OrdenMedica: {cita.tiene_orden_medica}"
             ),
             "notificationState": "ATTEND",
         }
         logger.info("🧪 Payload cita mínimo=%s", {k: datos_cita[k] for k in datos_cita})
         cita_creada = await saludtools.crear_cita_paciente(datos_cita)
-        if not cita_creada:
-            incr('citas_error_crear')
-            raise HTTPException(status_code=500, detail={"success": False, "mensaje": "Error al crear la cita en el sistema médico"})
+        # Determinar si la creación remota fue exitosa (id numérico presente y code==200 si existe)
+        remote_id = None
+        remote_code = None
+        if isinstance(cita_creada, dict):
+            remote_id = cita_creada.get("id")
+            try:
+                remote_code = int(cita_creada.get("code")) if cita_creada.get("code") else None
+            except Exception:
+                remote_code = None
+        remote_ok = bool(remote_id) and (remote_code in (None, 200))
 
+        if not cita_creada or (isinstance(cita_creada, dict) and not remote_ok and cita_creada.get("error") == "DOCTOR_NOT_FOUND"):
+            incr('citas_error_crear')
+            raise HTTPException(status_code=400, detail={"success": False, "mensaje": "No se pudo crear la cita: médico no válido"})
+
+        if not remote_ok:
+            incr('citas_creadas_local_fallback')
+        else:
+            incr('citas_creadas')
+            incr(f"citas_tipo_{sanitized_appt_type}")
+
+        # Log diagnóstico siempre
         try:
-            database.log_accion("CITA_CREADA", {
+            database.log_accion("CITA_INTENTO_CREAR", {
                 "paciente_documento": cita.documento,
-                "cita_id": cita_creada.get("id"),
                 "fecha": cita.fecha_deseada.isoformat(),
+                "remote_ok": remote_ok,
+                "remote_id": remote_id,
                 "saludtools_response": cita_creada
             })
         except Exception as e:
             logger.warning(f"Error logging a Supabase: {e}")
 
-        incr('citas_creadas')
-        incr(f"citas_tipo_{sanitized_appt_type}")
-
+        # Persistencia local enriquecida (estado distinto si remoto falló)
+        local_estado = 'scheduled' if remote_ok else 'pending_remote'
+        enriched_id = None
         try:
             paciente_local_id = database.obtener_paciente_por_documento(cita.documento)
             if not paciente_local_id:
@@ -114,7 +133,7 @@ async def agendar_cita(cita: CitaRequest):
                     cita.telefono,
                     (cita.email or ""),
                     cita.preferencia_contacto,
-                    plan_salud=getattr(cita, 'plan_salud', None),
+                    plan_salud=getattr(cita, 'tipo_medicina', None),
                     tiene_orden_medica=getattr(cita, 'tiene_orden_medica', None)
                 )
             start_at = cita.fecha_deseada
@@ -128,23 +147,26 @@ async def agendar_cita(cita: CitaRequest):
                     end_at,
                     duracion_min,
                     cita.descripcion,
-                    estado='scheduled'
-                    ,
+                    estado=local_estado,
                     fuente='whatsapp',
                     especialista_nombre=getattr(cita, 'especialista', None),
                     franja=getattr(cita, 'franja', None),
-                    plan_salud=getattr(cita, 'plan_salud', None),
+                    plan_salud=getattr(cita, 'tipo_medicina', None),
                     tiene_orden_medica=getattr(cita, 'tiene_orden_medica', None)
                 )
-                if isinstance(cita_creada, dict) and cita_creada.get('id'):
-                    database.set_saludtools_id(enriched_id, cita_creada['id'])
+                if remote_ok and isinstance(remote_id, int):
+                    database.set_saludtools_id(enriched_id, remote_id)
             except Exception as e:
                 logger.debug(f"No se pudo insertar cita enriquecida: {e}")
         except Exception as e:
             logger.debug(f"Fallo flujo enriched opcional: {e}")
 
-        logger.info(f"✅ Cita creada exitosamente: {cita_creada.get('id')}")
-        return {"success": True, "mensaje": "Cita agendada exitosamente en el sistema médico", "cita_id": cita_creada.get("id"), "fecha": cita.fecha_deseada.isoformat()}
+        if remote_ok:
+            logger.info(f"✅ Cita creada remotamente: {remote_id}")
+            return {"success": True, "mensaje": "Cita agendada exitosamente en el sistema médico", "cita_id": remote_id, "fecha": cita.fecha_deseada.isoformat(), "remote_confirmada": True, "cita_id_local": enriched_id}
+        else:
+            logger.warning("⚠️ Creación remota falló (fallback local). Se requiere confirmación manual.")
+            return {"success": True, "mensaje": "Cita registrada y pendiente de confirmación manual. Te confirmaremos en breve.", "remote_confirmada": False, "cita_id_local": enriched_id, "fecha": cita.fecha_deseada.isoformat(), "detalle_remoto": cita_creada}
     except HTTPException:
         raise
     except Exception as e:

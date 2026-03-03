@@ -12,8 +12,8 @@ __pycache__/
 .ruff_cache/
 
 # Config/secretos
-.env
-.env.*
+# .env (Comentado porque el usuario quiere subirlo a un repo privado)
+# .env.*
 secrets/
 !secrets/README.md
 
@@ -22,6 +22,9 @@ secrets/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Documentación obsoleta archivada
+docs_old/
 
 # Logs / builds
 logs/

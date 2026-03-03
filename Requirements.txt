@@ -5,15 +5,30 @@ python-dotenv
 pydantic
 email-validator
 python-multipart
-openai
+openai>=1.3.0
 requests
 httpx
 aiohttp
 supabase
 mangum
 python-dateutil
+pytz
 google-api-python-client
 google-auth
-google-generativeai
+google-generativeai>=0.3.0
 twilio
+flask
 pytest
+colorama  # Para monitor_presentacion.py
+grpcio  # Para Google APIs
+
+# === SISTEMA OCR INTELIGENTE ===
+pillow>=10.0.0  # Procesamiento de imágenes
+pytesseract>=0.3.10  # OCR con Tesseract (requiere binario tesseract instalado)
+opencv-python>=4.8.0  # Optimización de imágenes para OCR
+PyMuPDF>=1.23.0  # Procesamiento de PDFs (fitz)
+python-docx>=1.1.0  # Procesamiento de documentos Word
+numpy>=1.24.0  # Operaciones numéricas para procesamiento de imágenes
+
+# === FIREBASE (Base de datos producción) ===
+firebase-admin>=6.3.0  # Firebase Admin SDK para Firestore y Storage

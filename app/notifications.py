@@ -66,6 +66,49 @@ def _should_notify() -> bool:
     return True
 
 
+def notify_admin_critical(evento: str, detalle: str, contexto: Optional[dict] = None) -> dict:
+    """Envía una alerta crítica a un número ADMIN_WHATSAPP si está configurado.
+
+    Variables de entorno:
+      - ADMIN_WHATSAPP (ej: +573001112233)
+      - TWILIO_WHATSAPP_FROM
+    Retorna dict con resultado o motivo de omisión.
+    """
+    admin_raw = os.getenv("ADMIN_WHATSAPP")
+    if not admin_raw:
+        return {"skipped": "no-admin-config"}
+    if not _should_notify():
+        return {"skipped": "notifications-disabled"}
+    client = _twilio_client()
+    from_number = os.getenv("TWILIO_WHATSAPP_FROM")
+    if not client or not from_number:
+        return {"skipped": "missing-twilio-config"}
+    admin_to = admin_raw if admin_raw.startswith("whatsapp:") else f"whatsapp:{admin_raw}"
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    ctx_lines = []
+    if contexto:
+        for k,v in list(contexto.items())[:8]:
+            if v is None:
+                continue
+            sval = str(v)
+            if len(sval) > 100:
+                sval = sval[:97] + '…'
+            ctx_lines.append(f"• {k}: {sval}")
+    body = (
+        "🚨 ALERTA CRÍTICA SISTEMA\n"
+        f"🕒 {ts}\n"
+        f"⚠️ Evento: {evento}\n"
+        f"📄 Detalle: {detalle[:300]}\n"
+        + ("\n" + "\n".join(ctx_lines) if ctx_lines else "")
+    )
+    try:
+        msg = client.messages.create(from_=from_number, to=admin_to, body=body)
+        return {"sent": True, "sid": getattr(msg, "sid", None)}
+    except Exception as e:
+        logging.error(f"Error enviando alerta crítica: {e}")
+        return {"sent": False, "error": str(e)}
+
+
 def notify_secretaries_escalation(
     telefono_usuario: str,
     motivo: str,
@@ -74,7 +117,9 @@ def notify_secretaries_escalation(
     to_numbers_override: Optional[list[str]] = None,
 ) -> dict:
     """Envía una alerta por WhatsApp a todas las secretarias configuradas.
-
+    
+    FLEXIBLE: Construye mensaje con los datos disponibles, no requiere todos los campos.
+    
     Retorna un resumen del intento de envío por cada destinatario.
     """
     results: dict = {"sent": [], "skipped": [], "errors": []}
@@ -108,25 +153,50 @@ def notify_secretaries_escalation(
         return results
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    extra_lines = []
+    
+    # Construir mensaje de forma flexible - solo con datos disponibles
+    message_parts = ["📣 Nuevo caso para gestión humana"]
+    message_parts.append(f"🕒 {ts}")
+    
+    # Solo agregar campos si existen y son válidos
+    if telefono_usuario and telefono_usuario != "Desconocido":
+        message_parts.append(f"👤 Usuario: {telefono_usuario}")
+    
+    if motivo:
+        message_parts.append(f"🔎 Motivo: {motivo}")
+    
+    if ultimo_mensaje:
+        # Limitar longitud del mensaje
+        msg_preview = ultimo_mensaje[:500] if len(ultimo_mensaje) > 500 else ultimo_mensaje
+        message_parts.append(f"💬 Último mensaje: {msg_preview}")
+    
+    # Agregar extras si existen
     if extras:
+        extra_lines = []
         for k, v in extras.items():
-            if v is None:
+            if v is None or v == "":
                 continue
-            extra_lines.append(f"• {k}: {v}")
-    extra_block = ("\n" + "\n".join(extra_lines)) if extra_lines else ""
+            # Limitar longitud de valores largos
+            val = str(v)
+            if len(val) > 140:
+                val = val[:137] + '…'
+            extra_lines.append(f"• {k}: {val}")
+        
+        if extra_lines:
+            message_parts.append("\n" + "\n".join(extra_lines))
+    
+    message_parts.append("\nResponde al usuario por WhatsApp o llámalo directamente.")
+    
+    body = "\n".join(message_parts)
 
-    body = (
-        "📣 Nuevo caso para gestión humana\n"
-        f"🕒 {ts}\n"
-        f"👤 Usuario: {telefono_usuario}\n"
-        f"🔎 Motivo: {motivo}\n"
-        f"💬 Último mensaje: {ultimo_mensaje[:500]}\n"
-        f"{extra_block}\n\n"
-        "Responde al usuario por WhatsApp o llámalo directamente."
-    )
-
+    # TESTING MODE: Por defecto permitir auto-notificación (false), no bloquear ("0")
+    skip_self = (os.getenv("SKIP_SELF_NOTIFICATION", "false").lower() in {"1","true","yes","on"})
+    raw_user = telefono_usuario.replace("whatsapp:", "") if telefono_usuario else ""
     for to in to_numbers:
+        # Evitar notificación a uno mismo (mismo número que el usuario) si flag activo
+        if skip_self and raw_user and to.replace("whatsapp:", "") == raw_user:
+            results["skipped"].append({"to": to, "reason": "self-notification"})
+            continue
         try:
             msg = client.messages.create(from_=from_number, to=to, body=body)
             results["sent"].append({"to": to, "sid": getattr(msg, "sid", None)})
@@ -135,3 +205,7 @@ def notify_secretaries_escalation(
             results["errors"].append({"to": to, "error": str(e)})
 
     return results
+
+__all__ = [
+    'notify_secretaries_escalation', 'notify_admin_critical'
+]

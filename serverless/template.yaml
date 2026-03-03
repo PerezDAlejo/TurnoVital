@@ -1,100 +1,230 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: API Serverless para Sistema de Agendamiento Médico (FastAPI + Saludtools)
+Description: 'Secure File Storage for Medical Documents - Serverless Architecture'
 
 Globals:
-	Function:
-		Runtime: python3.12
-		Timeout: 30
-		MemorySize: 512
-		Tracing: Active
-		Environment:
-			Variables:
-				LOG_LEVEL: INFO
-				PYTHONPATH: /var/task
+  Function:
+    Timeout: 60
+    MemorySize: 1024
+    Runtime: python3.9
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        # Database
+        DATABASE_URL: !Ref DatabaseUrl
+        TENANT_KEY: !Ref TenantKey
+
+        # Security
+        SECURE_FILE_MASTER_KEY: !Ref SecureFileMasterKey
+        MAX_FILE_SIZE_MB: "50"
+
+        # OCR
+        OCR_ENABLED: "1"
+        OCR_CONFIDENCE_THRESHOLD: "0.6"
+
+        # Audit
+        AUDIT_RETENTION_DAYS: "2555"  # 7 years
+        AUDIT_DATABASE_ENABLED: "true"
+
+        # Storage
+        SECURE_STORAGE_PATH: "/tmp/secure_files"
 
 Parameters:
-	StageName:
-		Type: String
-		Default: dev
-	Environment:
-		Type: String
-		Default: testing
-	OpenAIKey:
-		Type: String
-		NoEcho: true
-	SaludtoolsApiKey:
-		Type: String
-		NoEcho: true
-	SaludtoolsApiSecret:
-		Type: String
-		NoEcho: true
-	TwilioAccountSid:
-		Type: String
-		NoEcho: true
-	TwilioAuthToken:
-		Type: String
-		NoEcho: true
-	TwilioWhatsappFrom:
-		Type: String
-	SupabaseUrl:
-		Type: String
-	SupabaseKey:
-		Type: String
-		NoEcho: true
+  DatabaseUrl:
+    Type: String
+    Description: "PostgreSQL database connection URL"
+    Default: "postgresql://user:password@localhost:5432/db"
+
+  TenantKey:
+    Type: String
+    Description: "Multi-tenant key"
+    Default: "default"
+
+  SecureFileMasterKey:
+    Type: String
+    Description: "Master key for file encryption"
+    NoEcho: true
+
+  Environment:
+    Type: String
+    Description: "Environment name"
+    Default: "dev"
+    AllowedValues:
+      - dev
+      - staging
+      - prod
 
 Resources:
-	ApiFunction:
-		Type: AWS::Serverless::Function
-		Properties:
-			FunctionName: !Sub agendamiento-api-${StageName}
-			Handler: serverless.handler.lambda_handler
-			CodeUri: ../
-			Architectures:
-				- x86_64
-			Policies:
-				- AWSLambdaBasicExecutionRole
-			Environment:
-				Variables:
-					ENVIRONMENT: !Ref Environment
-					OPENAI_API_KEY: !Ref OpenAIKey
-					SALUDTOOLS_API_KEY: !Ref SaludtoolsApiKey
-					SALUDTOOLS_API_SECRET: !Ref SaludtoolsApiSecret
-					TWILIO_ACCOUNT_SID: !Ref TwilioAccountSid
-					TWILIO_AUTH_TOKEN: !Ref TwilioAuthToken
-					TWILIO_WHATSAPP_FROM: !Ref TwilioWhatsappFrom
-					SUPABASE_URL: !Ref SupabaseUrl
-					SUPABASE_KEY: !Ref SupabaseKey
-			Events:
-				ApiRoot:
-					Type: Api
-					Properties:
-						Path: /
-						Method: ANY
-						RestApiId: !Ref ApiGateway
-				ApiProxy:
-					Type: Api
-					Properties:
-						Path: /{proxy+}
-						Method: ANY
-						RestApiId: !Ref ApiGateway
+  # API Gateway
+  SecureFileApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "SecureFileApi-${Environment}"
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
 
-	ApiGateway:
-		Type: AWS::Serverless::Api
-		Properties:
-			StageName: !Ref StageName
-			TracingEnabled: true
-			Cors:
-				AllowOrigins: "*"
-				AllowMethods: "*"
-				AllowHeaders: "*"
-			EndpointConfiguration: REGIONAL
-			MethodSettings:
-				- LoggingLevel: INFO
-					ResourcePath: "/*"
-					HttpMethod: "*"
+  # Lambda Functions
+  SecureFileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "SecureFileHandler-${Environment}"
+      CodeUri: .
+      Handler: serverless.secure_file_handler.handle_secure_file_operation
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambdaVPCAccessExecutionRole
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SecureFileApi
+            Path: /files
+            Method: post
+        GetFileEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SecureFileApi
+            Path: /files/{fileId}
+            Method: get
+        ListFilesEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SecureFileApi
+            Path: /files
+            Method: get
+        DeleteFileEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SecureFileApi
+            Path: /files/{fileId}
+            Method: delete
+        ProcessMedicalEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SecureFileApi
+            Path: /process-medical
+            Method: post
+        AuditTrailEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SecureFileApi
+            Path: /audit
+            Method: get
 
+  # S3 Bucket for file storage (optional, for large files)
+  SecureFileBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateS3Bucket
+    Properties:
+      BucketName: !Sub "secure-files-${AWS::AccountId}-${Environment}"
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      EncryptionConfiguration:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # KMS Key for encryption
+  FileEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: "KMS Key for secure file encryption"
+      KeyUsage: ENCRYPT_DECRYPT
+      KeySpec: SYMMETRIC_DEFAULT
+      Enabled: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "Enable IAM User Permissions"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: "Allow Lambda to use the key"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/SecureFileHandler-${Environment}"
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:GenerateDataKey
+              - kms:ReEncrypt*
+            Resource: "*"
+
+  # CloudWatch Alarms
+  FileOperationErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "SecureFile-Errors-${Environment}"
+      AlarmDescription: "Alert when secure file operations fail"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SecureFileFunction
+
+  HighDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "SecureFile-HighDuration-${Environment}"
+      AlarmDescription: "Alert when file operations take too long"
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 45000  # 45 seconds
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SecureFileFunction
+
+  # Outputs
 Outputs:
-	ApiUrl:
-		Description: URL base de la API
-		Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/
+  SecureFileApiUrl:
+    Description: "API Gateway endpoint URL for Secure File operations"
+    Value: !Sub "https://${SecureFileApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+    Export:
+      Name: !Sub "SecureFileApiUrl-${Environment}"
+
+  SecureFileFunctionArn:
+    Description: "ARN of the Secure File Lambda function"
+    Value: !GetAtt SecureFileFunction.Arn
+    Export:
+      Name: !Sub "SecureFileFunctionArn-${Environment}"
+
+  SecureFileBucketName:
+    Description: "Name of the S3 bucket for secure file storage"
+    Value: !Ref SecureFileBucket
+    Export:
+      Name: !Sub "SecureFileBucketName-${Environment}"
+    Condition: CreateS3Bucket
+
+  FileEncryptionKeyArn:
+    Description: "ARN of the KMS encryption key"
+    Value: !GetAtt FileEncryptionKey.Arn
+    Export:
+      Name: !Sub "FileEncryptionKeyArn-${Environment}"
+
+Conditions:
+  CreateS3Bucket:
+    !Equals [!Ref Environment, "prod"]

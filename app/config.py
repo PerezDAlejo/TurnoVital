@@ -2,6 +2,18 @@
 Configuración de la IPS React
 """
 
+import os
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
+
+# Variables de entorno importantes
+ENVIRONMENT = os.getenv("ENVIRONMENT", "testing")
+DATABASE_URL = os.getenv("DATABASE_URL")
+OCR_ENABLED = os.getenv("OCR_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH")
+
 # Información de la IPS
 IPS_CONFIG = {
     "nombre": "IPS React",
@@ -9,17 +21,18 @@ IPS_CONFIG = {
     "direccion": "Calle 10 32-115",
     "telefono": "",  # Pendiente
     "horarios": {
-        "lunes": {"inicio": "05:00", "fin": "20:00"},
-        "martes": {"inicio": "05:00", "fin": "20:00"},
-        "miercoles": {"inicio": "05:00", "fin": "20:00"},
-        "jueves": {"inicio": "05:00", "fin": "20:00"},
-        "viernes": {"inicio": "05:00", "fin": "19:00"},
-        "sabado": None,  # Cerrado
+        "lunes": {"inicio": "06:00", "fin": "20:00"},
+        "martes": {"inicio": "06:00", "fin": "20:00"},
+        "miercoles": {"inicio": "06:00", "fin": "20:00"},
+        "jueves": {"inicio": "06:00", "fin": "20:00"},
+        "viernes": {"inicio": "06:00", "fin": "19:00"},
+        "sabado": {"inicio": "08:00", "fin": "12:00"},  # Sábados habilitados
         "domingo": None   # Cerrado
     },
     "ultimo_paciente": {
         "lunes_jueves": "19:00",  # Último paciente 7pm-8pm
-        "viernes": "18:30"  # Ajustado para cita de 30min que termine a las 7pm
+        "viernes": "18:00",  # Último paciente 6pm para terminar a 7pm
+        "sabado": "11:00"  # Último paciente 11am para terminar a 12m
     }
 }
 
@@ -92,6 +105,18 @@ TIPOS_CITAS = {
             "categoria": "medica"
         }
     ]
+}
+
+# Tipos de fisioterapia para mapeo
+TIPOS_FISIOTERAPIA = {
+    "fisioterapia primera vez": "PRIMERAVEZ",
+    "primera vez fisioterapia": "PRIMERAVEZ", 
+    "control fisioterapia": "CONTROL",
+    "fisioterapia control": "CONTROL",
+    "acondicionamiento físico": "ACONDICIONAMIENTO",
+    "acondicionamiento": "ACONDICIONAMIENTO",
+    "rehabilitación cardíaca": "CONTROL",
+    "continuidad orden médica": "CONTROL"
 }
 
 # ESPECIALISTAS - Lista configurada según directrices entregadas
@@ -215,28 +240,55 @@ PHYSIO_ALLOWED_CANONICAL = {
 }
 PHYSIO_FORBIDDEN_KEYWORDS = {"SUELO PELV", "PELVIC", "NEUROL", "HIDRO", "CRIO", "BARIATR", "PARALIS", "MIOFASC"}
 
-def mapear_tipo_fisioterapia(descripcion: str) -> str:
-    """Normaliza una descripción libre a un código canonical permitido.
+def mapear_tipo_fisioterapia(descripcion: str, sesiones_orden: int = 1) -> str:
+    """Normaliza una descripción libre a los nombres exactos requeridos por SaludTools API.
 
-    Retorna uno de: PRIMERAVEZ, CONTROL, ACONDICIONAMIENTO.
-    Si contiene palabras restringidas, devuelve PRIMERAVEZ (neutral) para forzar revisión.
+    Retorna uno de: 
+    - "Cita De Primera Vez" (fisioterapia primera vez con orden)
+    - "Cita De Control" (fisioterapia seguimiento sin orden)
+    - "Acondicionamiento Fisico" (acondicionamiento físico)
+    - "Continuidad De Orden" (cuando la orden indica múltiples sesiones)
+    
+    Args:
+        descripcion: Descripción del tipo de servicio
+        sesiones_orden: Número de sesiones indicadas en la orden médica (si aplica)
     """
     if not descripcion:
-        return "CONTROL"
+        return "Cita De Control"
+    
     raw = descripcion.strip().lower()
     upper = raw.upper()
-    # Detectar prohibidos
+    
+    # Detectar si es continuidad de orden (múltiples sesiones)
+    if sesiones_orden and sesiones_orden > 1:
+        if "primer" in raw or "nueva" in raw or "primera vez" in raw:
+            return "Continuidad De Orden"
+    
+    if "continuidad" in raw:
+        return "Continuidad De Orden"
+    
+    # Detectar prohibidos (retornar Primera Vez para revisión)
     for kw in PHYSIO_FORBIDDEN_KEYWORDS:
         if kw in upper:
-            return "PRIMERAVEZ"
+            return "Cita De Primera Vez"
+    
+    # Detectar acondicionamiento
+    if "condicion" in raw or "acondi" in raw or "plan" in raw:
+        return "Acondicionamiento Fisico"
+    
+    # Detectar primera vez
     for code, meta in PHYSIO_ALLOWED_CANONICAL.items():
         if any(lbl in raw for lbl in meta["labels"]):
-            return code
-    if "primer" in raw or "nueva" in raw:
-        return "PRIMERAVEZ"
-    if "condicion" in raw or "acondi" in raw:
-        return "ACONDICIONAMIENTO"
-    return "CONTROL"
+            if code == "PRIMERAVEZ":
+                return "Cita De Primera Vez"
+            elif code == "ACONDICIONAMIENTO":
+                return "Acondicionamiento Fisico"
+    
+    if "primer" in raw or "nueva" in raw or "primera vez" in raw:
+        return "Cita De Primera Vez"
+    
+    # Default: control
+    return "Cita De Control"
 
 def es_servicio_restringido_fisioterapia(descripcion: str) -> bool:
     """Detecta si la descripción contiene un servicio no ofrecido."""
@@ -315,9 +367,10 @@ def obtener_horarios_texto() -> str:
 📍 Dirección: Calle 10 32-115
 
 ⏰ Horarios:
-• Lunes a Jueves: 5:00 AM - 8:00 PM
-• Viernes: 5:00 AM - 7:00 PM
-• Sábados y Domingos: Cerrado
+• Lunes a Jueves: 6:00 AM - 8:00 PM
+• Viernes: 6:00 AM - 7:00 PM
+• Sábados: 8:00 AM - 12:00 M
+• Domingos: Cerrado
 
 ⚕️ Tipos de citas disponibles:
 
@@ -334,7 +387,7 @@ FISIOTERAPIA (60 min):
 • Control Rehabilitación Cardíaca
 • Rehabilitación cardíaca primera vez
 
-💡 Último paciente: 7:00 PM (L-J), 6:30 PM (V)
+💡 Último paciente: 7:00 PM (L-J), 6:00 PM (V), 11:00 AM (S)
 """
 
 def obtener_especialistas_texto() -> str:

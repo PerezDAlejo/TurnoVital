@@ -1,17 +1,72 @@
 # app/database.py
 import psycopg2
+import psycopg2.pool
 from datetime import datetime, timezone
-from app.calendar import ensure_utc
+from app.calendar_ips import ensure_utc
 from dotenv import load_dotenv
 import os
 import json
+import logging
+from contextlib import contextmanager
+from typing import Optional
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL_DIRECT")
-TENANT_KEY = os.getenv("TENANT_KEY", "default")
+TENANT_KEY = os.getenv("TENANT_KEY", "react")  # Default optimizado para IPS React
+
+logger = logging.getLogger(__name__)
+
+# Connection Pool para mejor performance
+_connection_pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
+
+def init_connection_pool(minconn=2, maxconn=10):
+    """Inicializa el pool de conexiones"""
+    global _connection_pool
+    if _connection_pool is None:
+        try:
+            _connection_pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn, maxconn, DATABASE_URL
+            )
+            logger.info(f"Pool de conexiones inicializado: {minconn}-{maxconn}")
+        except Exception as e:
+            logger.error(f"Error inicializando pool: {e}")
+            raise
 
 def get_connection():
+    """Obtiene conexión del pool o crea una nueva"""
+    if _connection_pool:
+        try:
+            return _connection_pool.getconn()
+        except Exception as e:
+            logger.warning(f"Pool agotado, creando conexión directa: {e}")
     return psycopg2.connect(DATABASE_URL)
+
+def return_connection(conn):
+    """Devuelve conexión al pool"""
+    if _connection_pool:
+        _connection_pool.putconn(conn)
+    else:
+        conn.close()
+
+@contextmanager
+def get_db_connection():
+    """Context manager para conexiones con tenant context automático"""
+    conn = None
+    try:
+        conn = get_connection()
+        # Establecer tenant context automáticamente
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.tenant_key', %s, false)", (TENANT_KEY,))
+        conn.commit()
+        yield conn
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error en conexión DB: {e}")
+        raise
+    finally:
+        if conn:
+            return_connection(conn)
 
 def obtener_citas_paciente(paciente_id):
     conn = get_connection()
@@ -121,14 +176,38 @@ def log_accion(accion, datos):
 
 # ===================== NUEVAS FUNCIONES ENRIQUECIDAS ===================== #
 
-def upsert_paciente(documento: str, nombres: str, apellidos: str, telefono: str | None, email: str | None, preferencia_contacto: str | None, tipo_paciente: str | None = None):
-    """Inserta o actualiza paciente por documento y retorna su id."""
+def upsert_paciente(
+    documento: str,
+    nombres: str,
+    apellidos: str,
+    telefono: str | None,
+    email: str | None,
+    preferencia_contacto: str | None,
+    tipo_paciente: str | None = None,
+    entidad: str | None = None,
+    fecha_nacimiento: str | None = None,
+    direccion: str | None = None,
+    contacto_emergencia_nombre: str | None = None,
+    contacto_emergencia_telefono: str | None = None,
+    contacto_emergencia_parentesco: str | None = None,
+):
+    """Inserta o actualiza paciente por documento y retorna su id.
+
+    Campos extendidos agregados en migración 05. Cualquier campo None no sobreescribe
+    (excepto nombres/apellidos/telefono/email/preferencia_contacto que sí se actualizan siempre).
+    fecha_nacimiento se acepta como str (YYYY-MM-DD) y se delega a Postgres para cast.
+    """
     conn = get_connection()
     cur = conn.cursor()
+    # Preparar sentencia dinámica para soportar columnas nuevas sin romper entorno antiguo.
     cur.execute(
         """
-        INSERT INTO pacientes (documento, nombres, apellidos, telefono, email, preferencia_contacto, tipo_paciente)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO pacientes (
+            documento, nombres, apellidos, telefono, email, preferencia_contacto, tipo_paciente,
+            entidad, fecha_nacimiento, direccion,
+            contacto_emergencia_nombre, contacto_emergencia_telefono, contacto_emergencia_parentesco
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::date, %s, %s, %s, %s)
         ON CONFLICT (documento)
         DO UPDATE SET nombres = EXCLUDED.nombres,
                       apellidos = EXCLUDED.apellidos,
@@ -136,16 +215,68 @@ def upsert_paciente(documento: str, nombres: str, apellidos: str, telefono: str 
                       email = EXCLUDED.email,
                       preferencia_contacto = EXCLUDED.preferencia_contacto,
                       tipo_paciente = COALESCE(EXCLUDED.tipo_paciente, pacientes.tipo_paciente),
+                      entidad = COALESCE(EXCLUDED.entidad, pacientes.entidad),
+                      fecha_nacimiento = COALESCE(EXCLUDED.fecha_nacimiento, pacientes.fecha_nacimiento),
+                      direccion = COALESCE(EXCLUDED.direccion, pacientes.direccion),
+                      contacto_emergencia_nombre = COALESCE(EXCLUDED.contacto_emergencia_nombre, pacientes.contacto_emergencia_nombre),
+                      contacto_emergencia_telefono = COALESCE(EXCLUDED.contacto_emergencia_telefono, pacientes.contacto_emergencia_telefono),
+                      contacto_emergencia_parentesco = COALESCE(EXCLUDED.contacto_emergencia_parentesco, pacientes.contacto_emergencia_parentesco),
                       updated_at = now()
         RETURNING id
         """,
-        (documento, nombres, apellidos, telefono, email, preferencia_contacto, tipo_paciente)
+        (
+            documento,
+            nombres,
+            apellidos,
+            telefono,
+            email,
+            preferencia_contacto,
+            tipo_paciente,
+            entidad,
+            fecha_nacimiento,
+            direccion,
+            contacto_emergencia_nombre,
+            contacto_emergencia_telefono,
+            contacto_emergencia_parentesco,
+        ),
     )
     paciente_id = cur.fetchone()[0]
     conn.commit()
     cur.close()
     conn.close()
     return paciente_id
+
+def update_paciente_extended(paciente_id: str, **kwargs):
+    """Actualiza parcialmente campos extendidos del paciente.
+
+    Acepta kwargs entre: entidad, fecha_nacimiento, direccion, contacto_emergencia_nombre,
+    contacto_emergencia_telefono, contacto_emergencia_parentesco, plan_salud, tiene_orden_medica.
+    Ignora claves desconocidas. No actualiza campos None.
+    """
+    allowed = {
+        'entidad', 'fecha_nacimiento', 'direccion', 'contacto_emergencia_nombre',
+        'contacto_emergencia_telefono', 'contacto_emergencia_parentesco', 'plan_salud', 'tiene_orden_medica'
+    }
+    sets = []
+    values = []
+    for k, v in kwargs.items():
+        if k in allowed and v is not None:
+            if k == 'fecha_nacimiento':
+                sets.append(f"{k} = %s::date")
+            else:
+                sets.append(f"{k} = %s")
+            values.append(v)
+    if not sets:
+        return False
+    values.append(paciente_id)
+    sql = f"UPDATE pacientes SET {', '.join(sets)}, updated_at = now() WHERE id = %s"
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(sql, values)
+    conn.commit()
+    cur.close()
+    conn.close()
+    return True
 
 def insertar_cita_enriquecida(paciente_id: str, especialista_id: str, tipo_cita: str, start_at, end_at, duracion_min: int, notas: str | None, estado: str = 'scheduled', fuente: str = 'whatsapp', especialista_nombre: str | None = None, franja: str | None = None, plan_salud: str | None = None, tiene_orden_medica: bool | None = None):
     """Inserta una cita enriquecida y retorna su id.
@@ -493,3 +624,66 @@ def handoff_close_case(case_id: str, final_state: str = 'resolved'):
     conn.commit()
     cur.close()
     conn.close()
+
+# ============================================================================
+# FUNCIONES DE COMPATIBILIDAD PARA TESTS Y CÓDIGO LEGACY
+# ============================================================================
+
+def buscar_paciente_por_cedula(documento):
+    """Alias para obtener_paciente_por_documento para compatibilidad."""
+    return obtener_paciente_por_documento(documento)
+
+def obtener_citas_activas_paciente(paciente_id):
+    """Obtiene citas activas de un paciente."""
+    return listar_citas_enriquecidas_por_paciente(paciente_id)
+
+def cancelar_cita(cita_id: str, reason: str = "Cancelada por solicitud del paciente"):
+    """Alias para marcar_cita_cancelada."""
+    return marcar_cita_cancelada(cita_id, reason)
+
+def crear_cita_con_validacion(paciente_id: str, fecha, descripcion: str, **kwargs):
+    """Función de compatibilidad para crear citas con validación."""
+    from datetime import datetime
+    if isinstance(fecha, str):
+        fecha = datetime.fromisoformat(fecha.replace('Z', '+00:00'))
+    
+    # Usar insertar_cita_enriquecida si tenemos más datos
+    if kwargs:
+        return insertar_cita_enriquecida(
+            paciente_id=paciente_id,
+            especialista_id=kwargs.get('especialista_id', 'default'),
+            tipo_cita=kwargs.get('tipo_cita', 'FISIO'),
+            start_at=fecha,
+            end_at=kwargs.get('end_at', fecha),
+            duracion_min=kwargs.get('duracion_min', 60),
+            notas=descripcion,
+            **{k: v for k, v in kwargs.items() if k not in ['especialista_id', 'tipo_cita', 'end_at', 'duracion_min']}
+        )
+    else:
+        return insertar_cita(paciente_id, fecha, descripcion)
+
+def crear_paciente(nombre, documento, telefono, email=None, preferencia_contacto="whatsapp", plan_salud=None, tiene_orden_medica=None):
+    """Alias para insertar_paciente - compatibilidad con imports"""
+    return insertar_paciente(nombre, documento, telefono, email, preferencia_contacto, plan_salud, tiene_orden_medica)
+
+def obtener_citas_por_documento(documento):
+    """Obtener todas las citas de un paciente por su documento"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT c.fecha, c.descripcion, p.nombres, p.apellidos 
+        FROM citas c 
+        JOIN pacientes p ON c.paciente_id = p.id 
+        WHERE p.documento = %s 
+        ORDER BY c.fecha
+    """, (documento,))
+    citas = []
+    for row in cursor.fetchall():
+        citas.append({
+            "fecha": ensure_utc(row[0]),
+            "descripcion": row[1],
+            "paciente": f"{row[2]} {row[3]}".strip()
+        })
+    cursor.close()
+    conn.close()
+    return citas
