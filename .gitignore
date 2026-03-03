@@ -12,8 +12,10 @@ __pycache__/
 .ruff_cache/
 
 # Config/secretos
-# .env (Comentado porque el usuario quiere subirlo a un repo privado)
-# .env.*
+.env
+.env.*
+credentials.json
+*.csv
 secrets/
 !secrets/README.md
 

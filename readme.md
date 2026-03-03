@@ -3,9 +3,18 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Production%20Ready-brightgreen)
 
-TurnoVital es un MVP funcional diseñado para demostrar las capacidades de un asistente virtual IA para agendamiento de citas a través de **WhatsApp**, conectado directamente a **Google Calendar**.
+> **Proyecto Académico - Colegio ISC, Grupo 11D**
+> 
+> **Integrantes:**
+> - Alejandro Pérez Dávila
+> - Juan Felipe Valencia Gonzales
+> - Tomas Bedoya Montoya
 
-El sistema utiliza procesamiento de lenguaje natural (OpenAI/Gemini) para tener conversaciones fluidas con los pacientes y extraer los datos necesarios (Servicio, Fecha, Hora, Nombre) sin depender de comandos estrictos.
+## 📖 ¿Qué hace TurnoVital?
+
+TurnoVital es un MVP (Producto Mínimo Viable) diseñado para automatizar y revolucionar el agendamiento de citas. Actúa como un asistente virtual inteligente a través de **WhatsApp**, y se conecta de manera directa y transparente a **Google Calendar**.
+
+A diferencia de los chatbots tradicionales y rígidos de opciones numéricas, este sistema utiliza procesamiento de lenguaje natural avanzado (OpenAI/Gemini) para mantener conversaciones naturales y fluidas con los pacientes. Su objetivo principal es interpretar la intención del usuario y extraer inteligentemente todos los datos necesarios para la cita u orden médica (Servicio deseado, Fecha, Hora y Nombre del paciente) adaptándose por completo a cómo hablan las personas en su vida cotidiana.
 
 ---
 
